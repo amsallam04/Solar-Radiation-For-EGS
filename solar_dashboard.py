@@ -196,12 +196,14 @@ def card(title, content):
     """, unsafe_allow_html=True)
 
 # Solar radiation calculation function
+# ──────────────────────────────────────────────────────────────────────────
+# FIXED VERSION — see inline "FIX" comments for exactly what changed and why.
+# ──────────────────────────────────────────────────────────────────────────
 def calculate_solar_radiation(latitude, longitude, altitude, tilt_angle, day_of_year, timezone):
     # Define the day based on day of year
     date = pd.date_range("2024-01-01", periods=365, freq="D")[day_of_year - 1]
     
     # Create a time range from 6 AM to 6 PM (13 hours inclusive) directly in the target timezone
-    # This ensures we always calculate from 6 AM to 6 PM in the local timezone
     start_time = pd.Timestamp.combine(date.date(), time(6, 0)).tz_localize(timezone)
     end_time = pd.Timestamp.combine(date.date(), time(18, 0)).tz_localize(timezone)
     hours = pd.date_range(start=start_time, end=end_time, freq="h")
@@ -219,20 +221,42 @@ def calculate_solar_radiation(latitude, longitude, altitude, tilt_angle, day_of_
     max_air_mass = 38.0
     air_mass = np.minimum(air_mass, max_air_mass)
     
-    # Calculate direct normal irradiance (beam radiation)
-    dni = SOLAR_CONSTANT * np.exp(-0.14 * air_mass)
+    # ── FIX #1: Beam (DNI) attenuation model ────────────────────────────
+    # OLD: dni = SOLAR_CONSTANT * np.exp(-0.14 * air_mass)
+    # PROBLEM: an extinction coefficient of 0.14 is far too small for real clear-sky
+    # atmosphere. It only attenuates the solar constant by ~12% at air mass 1 (noon),
+    # giving DNI ~= 1187 W/m^2 at zenith — already unrealistically high
+    # (real clear-sky DNI at AM=1 is closer to 900-950 W/m^2).
+    # FIXED: replaced with the standard ASHRAE clear-sky beam radiation model,
+    # which is the textbook formula for this kind of estimate and matches
+    # measured clear-sky values much more closely.
+    dni = SOLAR_CONSTANT * (0.7 ** (air_mass ** 0.678))
     
-    # Apply a gradual cutoff for low sun angles
+    # Apply a gradual cutoff for low sun angles (unchanged — this part was fine)
     sun_factor = np.clip((90 - solpos["zenith"]) / 15, 0, 1)
     dni = dni * sun_factor
 
-    # Calculate diffuse and reflected radiation
-    dhi = 0.2 * dni
+    # ── FIX #2: Diffuse and Global radiation ─────────────────────────────
+    # OLD: dhi = 0.2 * dni
+    #      ghi = dni * cos_theta + dhi
+    # PROBLEM: dhi was defined as 20% of the *un-projected* beam (DNI), not of the
+    # horizontal beam component. Adding this large, zenith-angle-independent term
+    # on top of (dni * cos_theta) caused GHI to exceed the solar constant itself
+    # near solar noon (e.g. 1417 W/m^2 > 1367 W/m^2) — a physical impossibility,
+    # since no point on Earth's surface can receive more energy than arrives at
+    # the top of the atmosphere.
+    # FIXED: diffuse component is now defined as a fraction of the *horizontal*
+    # beam component (dni * cos_theta), which keeps GHI safely bounded below
+    # the solar constant at all times, matching real-world clear-sky behaviour.
     cos_theta = np.cos(zenith_rad)
-    ghi = dni * cos_theta + dhi
+    beam_horizontal = dni * cos_theta
+    dhi = 0.15 * beam_horizontal
+    ghi = beam_horizontal + dhi
+    
+    # Reflected radiation (unchanged formula, now operating on a physically valid GHI)
     rhi = 0.1 * ghi
 
-    # Calculate radiation on tilted surface
+    # Calculate radiation on tilted surface (unchanged — this part was structurally fine)
     poa_global = (
         dni * np.cos(np.radians(tilt_angle)) +
         dhi * ((1 + np.cos(np.radians(tilt_angle))) / 2) +
@@ -551,24 +575,39 @@ def main():
         st.markdown('</div>', unsafe_allow_html=True)
         
         st.markdown('<div class="solar-card">', unsafe_allow_html=True)
-        st.subheader("3. Beam Radiation")
-        st.latex(r"I_b = G_{sc} \cdot e^{-a\cdot AM}")
+        st.subheader("3. Beam Radiation  (FIXED — ASHRAE clear-sky model)")
+        st.latex(r"I_b = G_{sc} \cdot 0.7^{\,AM^{0.678}}")
         st.markdown("""
         Where:
         - $I_b$ is the beam radiation
         - $G_{sc}$ is the solar constant (1367 W/m²)
-        - $a$ is the atmospheric attenuation coefficient (0.14)
         - $AM$ is the air mass
+
+        **Why this changed:** the previous model used $I_b = G_{sc}\\cdot e^{-0.14\\cdot AM}$,
+        whose attenuation coefficient (0.14) was far too small for a real clear-sky atmosphere.
+        It produced beam radiation values that, once combined with diffuse radiation, exceeded
+        the solar constant itself near solar noon — which is physically impossible, since no
+        point on Earth's surface can receive more energy than arrives at the top of the
+        atmosphere. The ASHRAE clear-sky formula above is the standard textbook model for this
+        estimate and keeps results consistent with real-world measurements.
         """)
         st.markdown('</div>', unsafe_allow_html=True)
         
         st.markdown('<div class="solar-card">', unsafe_allow_html=True)
-        st.subheader("4. Diffuse Radiation")
-        st.latex(r"I_d = 0.2 \cdot I_b")
+        st.subheader("4. Diffuse Radiation  (FIXED)")
+        st.latex(r"I_d = 0.15 \cdot (I_b \cdot \cos\theta_z)")
         st.markdown("""
         Where:
         - $I_d$ is the diffuse radiation
         - $I_b$ is the beam radiation
+        - $\\theta_z$ is the solar zenith angle
+
+        **Why this changed:** the previous model defined diffuse radiation as a flat 20% of the
+        *raw* beam radiation ($I_d = 0.2\\cdot I_b$), independent of the sun's angle. Adding this
+        on top of the projected beam component caused Global Radiation to exceed the solar
+        constant at solar noon. The fix scales diffuse radiation from the *horizontal* beam
+        component ($I_b\\cdot\\cos\\theta_z$) instead, which keeps Global Radiation physically
+        bounded at every hour of the day.
         """)
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -581,6 +620,9 @@ def main():
         - $I_b$ is the beam radiation
         - $\\theta_z$ is the solar zenith angle
         - $I_d$ is the diffuse radiation
+
+        This step was structurally fine — it now simply operates on the corrected
+        (physically valid) Global Radiation value from step 4 above.
         """)
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -596,6 +638,8 @@ def main():
         - $I_{r,t}$ is the reflected radiation on tilted surface
         - $\\theta$ is the angle of incidence
         - $\\beta$ is the tilt angle
+
+        This step was also structurally fine and required no changes.
         """)
         st.markdown('</div>', unsafe_allow_html=True)
     
