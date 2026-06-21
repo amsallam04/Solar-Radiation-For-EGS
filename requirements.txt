@@ -6,3 +6,4 @@ scipy
 pvlib
 xlsxwriter
 geopy
+openpyxl
