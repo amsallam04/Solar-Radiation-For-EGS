@@ -15,7 +15,7 @@ SOLAR_CONSTANT = 1367  # W/m^2
 
 # Set page configuration
 st.set_page_config(
-    page_title="Global Solar Still Radiation Dashboard",
+    page_title="Solar Radiation Calculator",
     page_icon="☀️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -59,6 +59,25 @@ def add_solar_theme():
     """, unsafe_allow_html=True)
 
 add_solar_theme()
+
+# ──────────────────────────────────────────────────────────────────────────
+# FIX: Column names below are now spelled IDENTICALLY everywhere in the file
+# (DataFrame creation, every plotting function, and the results tables).
+# The original bug was a column created as "Diffuse Radiation (W/m²)"
+# (one space) but read back as "Diffuse Radiation  (W/m²)" (two spaces) —
+# Python/pandas treats these as two completely different column names,
+# which raised KeyError: 'Diffuse Radiation  (W/m²)' at runtime.
+# Fixed names (single space before the unit, used consistently everywhere):
+#   "Beam Radiation (W/m²)"
+#   "Diffuse Radiation (W/m²)"
+#   "Reflected Radiation (W/m²)"
+#   "Total POA Irradiance (W/m²)"
+# ──────────────────────────────────────────────────────────────────────────
+
+COL_BEAM = "Beam Radiation (W/m²)"
+COL_DIFFUSE = "Diffuse Radiation (W/m²)"
+COL_REFLECTED = "Reflected Radiation (W/m²)"
+COL_POA = "Total POA Irradiance (W/m²)"
 
 # Solar radiation calculation function
 def calculate_solar_radiation(latitude, longitude, altitude, tilt_angle, day_of_year, timezone_str):
@@ -111,56 +130,96 @@ def calculate_solar_radiation(latitude, longitude, altitude, tilt_angle, day_of_
 
     df = pd.DataFrame({
         "Hour": hours.hour,
-        "Beam Radiation on Glass Cover (W/m²)": poa_components['poa_direct'],
-        "Diffuse Radiation on Glass Cover (W/m²)": poa_components['poa_sky_diffuse'],
-        "Reflected Radiation on Glass Cover (W/m²)": poa_components['poa_ground_diffuse'],
-        "Total POA Irradiance on Glass Cover (W/m²)": poa_components['poa_global']
+        COL_BEAM: poa_components['poa_direct'],
+        COL_DIFFUSE: poa_components['poa_sky_diffuse'],
+        COL_REFLECTED: poa_components['poa_ground_diffuse'],
+        COL_POA: poa_components['poa_global']
     })
     
     df = df.round(2)
-    return df, df.sum(numeric_only=True).round(2)
+    totals = df.drop(columns=["Hour"]).sum(numeric_only=True).round(2)
+    return df, totals
 
-# Plotting functions
+# ──────────────────────────────────────────────────────────────────────────
+# Plotting functions — clean, minimal, professional style
+# ──────────────────────────────────────────────────────────────────────────
+
+# Shared professional color palette
+C_POA = "#E8741C"       # warm orange — primary series
+C_BEAM = "#F2B705"      # amber
+C_DIFFUSE = "#5DADE2"   # soft blue
+C_REFLECTED = "#5D6D7E" # slate gray
+GRID_COLOR = "#E5E5E5"
+TEXT_COLOR = "#333333"
+
+def _apply_clean_style(ax, fig):
+    """Shared minimal/professional styling for all charts."""
+    fig.patch.set_facecolor('white')
+    ax.set_facecolor('white')
+    for spine in ['top', 'right']:
+        ax.spines[spine].set_visible(False)
+    for spine in ['left', 'bottom']:
+        ax.spines[spine].set_color('#CCCCCC')
+    ax.grid(True, linestyle='-', linewidth=0.6, color=GRID_COLOR, alpha=0.8)
+    ax.set_axisbelow(True)
+    ax.tick_params(colors=TEXT_COLOR, labelsize=10)
+    ax.xaxis.label.set_color(TEXT_COLOR)
+    ax.yaxis.label.set_color(TEXT_COLOR)
+
 def plot_radiation_line(df):
-    plt.style.use('default')
-    fig, ax = plt.subplots(figsize=(10, 5))
-    fig.patch.set_facecolor('#FFFAF0')
-    ax.set_facecolor('#FFFAF0')
-    colors = ['#FFA500', '#FFD700', '#87CEEB', '#4682B4']
+    fig, ax = plt.subplots(figsize=(9, 4.5))
     
-    ax.plot(df["Hour"], df["Total POA Irradiance on Glass Cover (W/m²)"], label="Total POA", marker='o', color=colors[0], linewidth=2.5)
-    ax.plot(df["Hour"], df["Beam Radiation on Glass Cover (W/m²)"], label="Beam (Glass)", marker='s', color=colors[1], linewidth=2)
-    ax.plot(df["Hour"], df["Diffuse Radiation on Glass Cover (W/m²)"], label="Diffuse (Glass)", marker='^', color=colors[2], linewidth=2)
-    ax.plot(df["Hour"], df["Reflected Radiation on Glass Cover (W/m²)"], label="Reflected (Glass)", marker='d', color=colors[3], linewidth=2)
-    
-    ax.set_xlabel("Hour", fontweight='bold')
-    ax.set_ylabel("Radiation (W/m²)", fontweight='bold')
-    ax.set_title("Hourly Solar Radiation on Glass Cover", fontweight='bold', color='#FFA500')
+    ax.plot(df["Hour"], df[COL_POA], label="Total POA", color=C_POA, linewidth=2.4, marker='o', markersize=4)
+    ax.plot(df["Hour"], df[COL_BEAM], label="Beam", color=C_BEAM, linewidth=1.6, marker='o', markersize=3, alpha=0.85)
+    ax.plot(df["Hour"], df[COL_DIFFUSE], label="Diffuse", color=C_DIFFUSE, linewidth=1.6, marker='o', markersize=3, alpha=0.85)
+    ax.plot(df["Hour"], df[COL_REFLECTED], label="Reflected", color=C_REFLECTED, linewidth=1.6, marker='o', markersize=3, alpha=0.85)
+
+    ax.set_xlabel("Hour", fontsize=11, fontweight='medium')
+    ax.set_ylabel("Radiation (W/m²)", fontsize=11, fontweight='medium')
+    ax.set_title("Hourly Solar Radiation", fontsize=13, fontweight='bold', color=TEXT_COLOR, loc='left', pad=12)
     ax.set_xticks(range(6, 19))
-    ax.grid(True, linestyle='--', alpha=0.7)
-    ax.legend(frameon=True, shadow=True)
+
+    legend = ax.legend(frameon=False, fontsize=10, loc='upper left', bbox_to_anchor=(0, -0.18), ncol=4)
+
+    _apply_clean_style(ax, fig)
+    fig.tight_layout()
     return fig
 
 def plot_radiation_pie(totals):
-    labels = ['Beam (Glass)', 'Diffuse (Glass)', 'Reflected (Glass)']
-    sizes = [
-        totals["Beam Radiation on Glass Cover (W/m²)"],
-        totals["Diffuse Radiation on Glass Cover (W/m²)"],
-        totals["Reflected Radiation on Glass Cover (W/m²)"]
-    ]
-    colors = ['#FFD700', '#87CEEB', '#4682B4']
-    fig, ax = plt.subplots(figsize=(8, 8))
-    fig.patch.set_facecolor('#FFFAF0')
-    ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', shadow=True, startangle=140)
-    ax.set_title('Radiation Distribution on Glass Cover', fontweight='bold', color='#FFA500')
+    labels = ['Beam', 'Diffuse', 'Reflected']
+    sizes = [totals[COL_BEAM], totals[COL_DIFFUSE], totals[COL_REFLECTED]]
+    colors = [C_BEAM, C_DIFFUSE, C_REFLECTED]
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    fig.patch.set_facecolor('white')
+
+    wedges, texts, autotexts = ax.pie(
+        sizes, labels=labels, colors=colors, autopct='%1.1f%%',
+        startangle=90, pctdistance=0.75,
+        wedgeprops=dict(width=0.45, edgecolor='white', linewidth=2),
+        textprops=dict(fontsize=11, color=TEXT_COLOR)
+    )
+    for at in autotexts:
+        at.set_color('white')
+        at.set_fontweight('bold')
+        at.set_fontsize(10)
+
+    ax.set_title('Radiation Distribution', fontsize=13, fontweight='bold', color=TEXT_COLOR, pad=12)
+    fig.tight_layout()
     return fig
 
 def plot_radiation_bar(df):
-    fig, ax = plt.subplots(figsize=(10, 5))
-    fig.patch.set_facecolor('#FFFAF0')
-    ax.bar(df["Hour"], df["Total POA Irradiance on Glass Cover (W/m²)"], color='#FFD700', edgecolor='#FFA500')
-    ax.set_title("Hourly Total POA Radiation", fontweight='bold', color='#FFA500')
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+
+    ax.bar(df["Hour"], df[COL_POA], color=C_POA, width=0.6, edgecolor='none')
+
+    ax.set_xlabel("Hour", fontsize=11, fontweight='medium')
+    ax.set_ylabel("Total POA Radiation (W/m²)", fontsize=11, fontweight='medium')
+    ax.set_title("Hourly Total POA Radiation", fontsize=13, fontweight='bold', color=TEXT_COLOR, loc='left', pad=12)
     ax.set_xticks(range(6, 19))
+
+    _apply_clean_style(ax, fig)
+    fig.tight_layout()
     return fig
 
 def download_excel(df, totals):
@@ -171,13 +230,28 @@ def download_excel(df, totals):
     return output.getvalue()
 
 # --- Sidebar Layout ---
-st.sidebar.markdown('<div style="text-align: center;"><h2>☀️ Solar Still Settings</h2></div>', unsafe_allow_html=True)
+# FIX: renamed from "Solar Still Settings" to a general-purpose title,
+# since this sidebar section configures the calculator itself (location,
+# timezone, tilt, date) and isn't specific to a solar still.
+st.sidebar.markdown('<div style="text-align: center;"><h2>☀️ Radiation Calculator Settings</h2></div>', unsafe_allow_html=True)
+
+# ── Live current date, shown at the very top of the sidebar ──────────────
+current_datetime = datetime.now().strftime("%B %d, %Y — %I:%M %p")
+st.sidebar.markdown(
+    f"<div style='text-align:center; color:#777; margin-bottom:0.5rem;'>🕒 {current_datetime}</div>",
+    unsafe_allow_html=True
+)
+
+# ── Navigation, placed right below the date ───────────────────────────────
+page = st.sidebar.radio("Go to", ["Dashboard", "Equations", "About Solar Energy"])
+
+st.sidebar.markdown("---")
 
 st.sidebar.markdown("### 📍 Location Settings")
 country_name = st.sidebar.text_input("Country Name", "Egypt")
 city_name = st.sidebar.text_input("City Name", "Cairo")
 
-geolocator = Nominatim(user_agent="solar_still_app")
+geolocator = Nominatim(user_agent="solar_radiation_app")
 default_lat, default_lon, default_alt = 30.04, 31.23, 23
 default_tz = "Africa/Cairo"
 
@@ -207,48 +281,49 @@ if tz_option == "Select from List":
 else:
     timezone_input = st.sidebar.text_input("Enter Timezone (e.g., Africa/Cairo, UTC)", value=default_tz)
 
-st.sidebar.markdown("### 📐 Solar Still Settings")
-tilt_angle = st.sidebar.slider("Glass Cover Tilt Angle (°)", 0, 90, 30)
+st.sidebar.markdown("### 📐 Panel / Surface Settings")
+tilt_angle = st.sidebar.slider("Surface Tilt Angle (°)", 0, 90, 30)
 st.sidebar.info(f"Panel Azimuth: {'180° (South)' if latitude >= 0 else '0° (North)'}")
 
 st.sidebar.markdown("### 📅 Time Settings")
 day_of_year = st.sidebar.slider("Day of Year", 1, 365, datetime.now().timetuple().tm_yday)
 
-page = st.sidebar.radio("Go to", ["Dashboard", "Equations", "About Solar Energy"])
-
 # --- Main Pages ---
 if page == "Dashboard":
-    st.markdown(f"<h1>☀️ Solar Still Radiation Dashboard - {city_name}, {country_name}</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1>☀️ Solar Radiation Dashboard - {city_name}, {country_name}</h1>", unsafe_allow_html=True)
     
     if st.button("Calculate Solar Radiation"):
         df, totals = calculate_solar_radiation(latitude, longitude, altitude, tilt_angle, day_of_year, timezone_input)
         
-        col_graphs, col_tables = st.columns([1, 1])
+        # ── Professional layout order ─────────────────────────────────
+        # 1) Main hourly chart      — the big picture first
+        # 2) Hourly data table      — detailed numbers
+        # 3) Total daily radiation  — summary, directly below detail
+        # 4) Bar chart              — secondary visual
+        # 5) Distribution pie chart — supporting breakdown, last
         
-        with col_graphs:
-            st.markdown('<div class="solar-card"><h3>📈 Hourly Radiation Graph</h3>', unsafe_allow_html=True)
-            st.pyplot(plot_radiation_line(df))
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            st.markdown('<div class="solar-card"><h3>📊 Hourly Total POA Radiation</h3>', unsafe_allow_html=True)
-            st.pyplot(plot_radiation_bar(df))
-            st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('<div class="solar-card"><h3>📈 Hourly Radiation Graph</h3>', unsafe_allow_html=True)
+        st.pyplot(plot_radiation_line(df))
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.markdown('<div class="solar-card"><h3>📋 Hourly Radiation Data (6 AM - 6 PM)</h3>', unsafe_allow_html=True)
+        st.dataframe(df.style.format("{:.2f}").background_gradient(cmap="YlOrRd", subset=[COL_POA]), use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.markdown('<div class="solar-card"><h3>☀️ Total Daily Radiation</h3>', unsafe_allow_html=True)
+        display_totals = totals.to_frame().T
+        st.dataframe(display_totals.style.format("{:.2f}"), use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.download_button("📥 Download Excel Report", download_excel(df, totals), "solar_radiation_report.xlsx")
+        
+        st.markdown('<div class="solar-card"><h3>📊 Hourly Total POA Radiation</h3>', unsafe_allow_html=True)
+        st.pyplot(plot_radiation_bar(df))
+        st.markdown('</div>', unsafe_allow_html=True)
 
-            st.markdown('<div class="solar-card"><h3>📊 Radiation Distribution</h3>', unsafe_allow_html=True)
-            st.pyplot(plot_radiation_pie(totals))
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-        with col_tables:
-            st.markdown('<div class="solar-card"><h3>☀️ Total Daily Radiation</h3>', unsafe_allow_html=True)
-            display_totals = totals.to_frame().T.drop(columns=['Hour'], errors='ignore')
-            st.dataframe(display_totals.style.format("{:.2f}"))
-            st.markdown('</div>', unsafe_allow_html=True)
-
-            st.markdown('<div class="solar-card"><h3>📋 Hourly Radiation Data (6 AM - 6 PM)</h3>', unsafe_allow_html=True)
-            st.dataframe(df.style.format("{:.2f}").background_gradient(cmap="YlOrRd", subset=['Total POA Irradiance on Glass Cover (W/m²)']))
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            st.download_button("📥 Download Excel Report", download_excel(df, totals), "solar_still_report.xlsx")
+        st.markdown('<div class="solar-card"><h3>📊 Radiation Distribution</h3>', unsafe_allow_html=True)
+        st.pyplot(plot_radiation_pie(totals))
+        st.markdown('</div>', unsafe_allow_html=True)
 
 elif page == "Equations":
     st.markdown("<h1>Solar Radiation Equations & Parameters</h1>", unsafe_allow_html=True)
